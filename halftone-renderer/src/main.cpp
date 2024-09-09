@@ -1,19 +1,11 @@
-#define STB_IMAGE_IMPLEMENTATION    // Implement stb_image.h
+#define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 
-#define STB_IMAGE_WRITE_IMPLEMENTATION  // Implement stb_image_write.h
+#define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
 
 #include <iostream>
 #include <vector>    // For using heap-allocated memory for large data
-#include <windows.h> // For Windows-specific functions
-
-// Safe wrapper around sprintf to avoid deprecation warnings
-#ifdef _MSC_VER
-    #define snprintf sprintf_s
-#else
-    #define snprintf snprintf
-#endif
 
 // Safely load and convert image data
 void safeLoadImage(const char* imagePath, unsigned char** imgData, int* width, int* height, int* channels) {
@@ -24,25 +16,36 @@ void safeLoadImage(const char* imagePath, unsigned char** imgData, int* width, i
     }
 }
 
-// Floyd-Steinberg dithering algorithm with heap allocation for large data
-void applyFloydSteinbergDithering(unsigned char* data, int width, int height, int channels) {
-    std::vector<int> errorBuffer(width * height * channels, 0); // Allocate on heap
-    for (int y = 0; y < height; ++y) {
-        for (int x = 0; x < width; ++x) {
-            int index = (y * width + x) * channels;
-            int oldPixel = data[index];
-            int newPixel = oldPixel < 128 ? 0 : 255;
-            data[index] = newPixel;
-            int error = oldPixel - newPixel;
+// Modified Floyd-Steinberg dithering with block size (dot size control)
+void applyHalftoneDithering(unsigned char* data, int width, int height, int channels, int dotSizeFactor) {
+    for (int y = 0; y < height; y += dotSizeFactor) {
+        for (int x = 0; x < width; x += dotSizeFactor) {
+            // Average the pixel values within the block (dot)
+            int sum = 0;
+            int pixelCount = 0;
 
-            if (x + 1 < width)
-                data[(y * width + (x + 1)) * channels] += error * 7 / 16;
-            if (x - 1 >= 0 && y + 1 < height)
-                data[((y + 1) * width + (x - 1)) * channels] += error * 3 / 16;
-            if (y + 1 < height)
-                data[((y + 1) * width + x) * channels] += error * 5 / 16;
-            if (x + 1 < width && y + 1 < height)
-                data[((y + 1) * width + (x + 1)) * channels] += error * 1 / 16;
+            // Loop through the pixels in the block
+            for (int dy = 0; dy < dotSizeFactor && (y + dy) < height; ++dy) {
+                for (int dx = 0; dx < dotSizeFactor && (x + dx) < width; ++dx) {
+                    int index = ((y + dy) * width + (x + dx)) * channels;
+                    sum += data[index];
+                    pixelCount++;
+                }
+            }
+
+            // Calculate the average brightness of the block
+            int average = sum / pixelCount;
+
+            // Determine the new pixel value (black or white) based on the average
+            int newPixel = (average < 128) ? 0 : 255;
+
+            // Set the new pixel value for the entire block
+            for (int dy = 0; dy < dotSizeFactor && (y + dy) < height; ++dy) {
+                for (int dx = 0; dx < dotSizeFactor && (x + dx) < width; ++dx) {
+                    int index = ((y + dy) * width + (x + dx)) * channels;
+                    data[index] = newPixel;
+                }
+            }
         }
     }
 }
@@ -53,8 +56,11 @@ int main() {
     int width, height, channels;
     safeLoadImage("assets/input.png", &imgData, &width, &height, &channels);
 
-    // Apply dithering
-    applyFloydSteinbergDithering(imgData, width, height, 1);
+    // Set the dot size factor (the larger the value, the larger the halftone dots)
+    int dotSizeFactor = 1;  // Increase this value to make the dots bigger
+
+    // Apply the modified halftone dithering
+    applyHalftoneDithering(imgData, width, height, 1, dotSizeFactor);
 
     // Save the dithered result
     if (stbi_write_png("assets/output_dithered.png", width, height, 1, imgData, width)) {
